@@ -50,13 +50,19 @@ function str(env, key, def) {
   return v === undefined || v === null || v === '' ? def : String(v);
 }
 
-/** 常数时间字符串比较（防时序侧信道） */
+/**
+ * 常数时间字符串比较（防时序侧信道）。
+ * v1.4.2（安全加固）：长度差异折叠进结果、循环固定为较长串的长度——
+ * 不再因「长度不等提前 return」泄露 token 长度。
+ */
 function safeEqual(a, b) {
   const x = String(a);
   const y = String(b);
-  if (x.length !== y.length) return false;
-  let r = 0;
-  for (let i = 0; i < x.length; i++) r |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  let r = x.length ^ y.length;
+  const n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) {
+    r |= (x.charCodeAt(i) || 0) ^ (y.charCodeAt(i) || 0);
+  }
   return r === 0;
 }
 

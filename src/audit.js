@@ -444,16 +444,24 @@ export class AuditStore {
 
   /**
    * 接入拦截判定：IP（连接建立即拦）/ peerId / 网络名（分组与摘要两类）。
+   * digest 类 v1.4.2 起支持「网络名:摘要」完整粒度（删分组/删摘要注册时写入），
+   * 同时回退匹配纯网络名（存量数据与管理端手工拉黑）。
+   * @param {{ip?:string, peerId?:number, networkName?:string, digestHex?:string}} q
    * @returns {{blocked:boolean, cat?:string, value?:string|number}}
    */
-  checkAccess({ ip, peerId, networkName }) {
+  checkAccess({ ip, peerId, networkName, digestHex }) {
     if (ip && this.blacklistHas('socket', ip)) return { blocked: true, cat: 'socket', value: ip };
     if (peerId != null && this.blacklistHas('peer', peerId)) {
       return { blocked: true, cat: 'peer', value: peerId };
     }
     if (networkName) {
-      if (this.blacklistHas('digest', networkName)) {
-        return { blocked: true, cat: 'digest', value: networkName };
+      // digest 类：先匹配完整「网络名:摘要」（新粒度），回退纯网络名（存量/手工）
+      const full = digestHex ? `${networkName}:${digestHex}` : null;
+      const digestHit = (full && this.blacklistHas('digest', full))
+        ? full
+        : (this.blacklistHas('digest', networkName) ? networkName : null);
+      if (digestHit) {
+        return { blocked: true, cat: 'digest', value: digestHit };
       }
       if (this.blacklistHas('group', networkName)) {
         return { blocked: true, cat: 'group', value: networkName };

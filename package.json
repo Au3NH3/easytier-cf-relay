@@ -1,6 +1,6 @@
 {
   "name": "easytier-cf-relay",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "EasyTier WebSocket relay on Cloudflare Workers + Durable Objects (pure P2P preferred, hibernation-friendly)",
   "main": "src/index.js",
   "type": "module",
@@ -15,6 +15,6 @@
   },
   "devDependencies": {
     "protobufjs-cli": "^2.6.2",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.145.0"
   }
 }

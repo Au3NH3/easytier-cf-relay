@@ -71,7 +71,7 @@ export function buildConfig(env) {
     serverPeerId: int(env, 'SERVER_PEER_ID', 10000001) >>> 0,
     serverNetworkName: str(env, 'SERVER_NETWORK_NAME', 'public_server'),
     serverHostname: str(env, 'SERVER_HOSTNAME', 'easytier-cf-relay'),
-    serverVersionStr: str(env, 'SERVER_VERSION_STR', 'easytier-cf-relay/1.4.1'),
+    serverVersionStr: str(env, 'SERVER_VERSION_STR', 'easytier-cf-relay/1.5.0'),
     avoidRelayData: bool(env, 'AVOID_RELAY_DATA', true),
     relayData: bool(env, 'RELAY_DATA', true),
     maxPeersPerRoom: int(env, 'MAX_PEERS_PER_ROOM', 64),
@@ -79,6 +79,13 @@ export function buildConfig(env) {
     // 仅 DO 升级层权威检查（边缘层无状态无法计数）；同 NAT 多节点共享出口 IP，
     // 默认 6 兼顾绝大多数场景。
     maxConnsPerIp: intOrZero(env, 'MAX_CONNS_PER_IP', 6),
+    // 单连接消息速率上限（v1.5，事前限流）：每连接每秒消息数，持续超限断开
+    // （4008 rate limited）。EasyTier 心跳 8s 1 个、路由同步爆发每秒数十个，
+    // 默认 50 非常宽裕；0 = 关闭
+    msgRateLimitPerSec: intOrZero(env, 'MSG_RATE_LIMIT_PER_SEC', 50),
+    // 每分组 peer 上限（v1.5）：单个网络分组的在线节点数上限，防单网络吃满
+    // 整个房间影响其它网络；0 = 不限（仅受房间总上限约束）
+    maxPeersPerGroup: intOrZero(env, 'MAX_PEERS_PER_GROUP', 32),
     maxMessageBytes: int(env, 'MAX_MESSAGE_BYTES', 131072),
     handshakeTimeoutMs: int(env, 'HANDSHAKE_TIMEOUT_MS', 15000),
     peerIdleTimeoutMs: int(env, 'PEER_IDLE_TIMEOUT_MS', 75000),
@@ -145,6 +152,10 @@ export class RelayRoom {
       blRejected: 0,
       // 单 IP 并发上限拦截次数（v1.4.1，DO 升级层口径）
       ipLimited: 0,
+      // 单连接速率限制断开次数（v1.5，DO 层口径）
+      rateLimited: 0,
+      // 分组节点上限拒绝次数（v1.5，DO 层口径）
+      groupLimited: 0,
     };
     this.startedAt = Date.now();
     this._dirty = false;
@@ -379,9 +390,9 @@ export class RelayRoom {
         });
       }
     }
-    if (this.pm.totalPeers() >= this.config.maxPeersPerRoom) {
-      return new Response('Room full', { status: 429 });
-    }
+    // 房间满拒绝统一在握手层（4029）：升级层无法识别「同 peerId 重连顶替」，
+    // 若在此 429 会把已有节点的重连恢复也一并挡死（v1.5 修复）；握手层有
+    // 顶替豁免，且黑名单/握手超时/速率限制在升级前已兜住滥用。
     // 单 IP 并发连接上限（v1.4.1）：与黑名单不同，这是事前限流——
     // 攻击者无需触发任何警报即可用普通握手占满房间，此检查补上该缺口。
     if (this.config.maxConnsPerIp > 0 && clientIp) {
@@ -530,6 +541,25 @@ export class RelayRoom {
     this.counters.msgsIn += 1;
     this.counters.bytesIn += buf.length;
 
+    // 单连接消息速率限制（v1.5，事前限流）：固定 1s 窗口计数，持续超限断开。
+    // 计数包含全部消息类型（任何包都消耗 DO 唤醒与处理）。
+    if (this.config.msgRateLimitPerSec > 0) {
+      if (now - (ws._rateWindowStart || 0) >= 1000) {
+        ws._rateWindowStart = now;
+        ws._rateCount = 0;
+      }
+      ws._rateCount = (ws._rateCount || 0) + 1;
+      if (ws._rateCount > this.config.msgRateLimitPerSec) {
+        this.counters.rateLimited += 1;
+        this.log.warn(
+          `rate limit exceeded: peer=${ws._peerId} count=${ws._rateCount}/${this.config.msgRateLimitPerSec}/s`
+        );
+        this._close(ws, 4008, 'rate limited');
+        this._cleanupPeer(ws, 'rate-limited');
+        return;
+      }
+    }
+
     if (buf.length > this.config.maxMessageBytes) {
       this.log.warn(`oversized message (${buf.length}) from socket, closing`);
       this._close(ws, 4009, 'oversized');
@@ -552,6 +582,21 @@ export class RelayRoom {
       // 目标为本端却加密 -> 无法处理；转发场景不受影响（原样透传）
       if (header.toPeerId === this.config.serverPeerId) {
         this.log.debug(`drop encrypted packet addressed to server (type=${header.packetType})`);
+        return;
+      }
+    }
+
+    // v1.4.2 安全修复（外部安全加固）：发往服务端的 RPC 不经过 _forward
+    // 的源校验——统一门禁：a) 未握手不处理控制面 RPC（阻断匿名连接驱动路由
+    // 会话状态机）；b) fromPeerId 必须与连接注册身份一致（阻断冒名 SyncRouteInfo
+    // 以 direct 自报覆盖任意在线节点路由、冒名 ReportPeers 覆盖 PeerCenter
+    // 直连表、伪造 RpcResp 清空会话强制全量重推）。官方客户端恒以自身
+    // peerId 为 from，不破坏兼容；与 _forward 的身份校验同一规则。
+    if (header.packetType === PacketType.RpcReq || header.packetType === PacketType.RpcResp) {
+      if (ws._peerId == null) return;
+      if (header.fromPeerId !== ws._peerId) {
+        this.counters.forgeries += 1;
+        this.log.warn(`drop forged rpc: conn_peer=${ws._peerId} claims from=${header.fromPeerId} type=${header.packetType}`);
         return;
       }
     }
@@ -662,9 +707,12 @@ export class RelayRoom {
     const networkName = String(req.networkName || '');
     const digestHex = bytesToHex(req.networkSecretDigest || new Uint8Array(0));
 
-    // 黑名单拦截：peerId / 网络名（group / digest 两类）
+    // 黑名单拦截：peerId / 网络名（group / digest 两类；digest 类 v1.4.2 起
+    // 支持完整「网络名:摘要」粒度）
     {
-      const bl = this.audit.checkAccess({ ip: ws._clientIp || undefined, peerId, networkName });
+      const bl = this.audit.checkAccess({
+        ip: ws._clientIp || undefined, peerId, networkName, digestHex,
+      });
       if (bl.blocked) {
         // v1.3.0：拒绝不写入 peers 记录（防重连风暴刷爆记录列表），只计数
         this.counters.blRejected += 1;
@@ -688,9 +736,30 @@ export class RelayRoom {
     }
     const groupKey = resolved.groupKey;
 
+    // 房间满（v1.5：拒绝统一在握手层，升级层 429 已移除）——同 peerId 重连
+    // 顶替豁免（顶替不增加节点总数，addPeer 会替换旧 socket），否则房间满时
+    // 已有节点断线后永远无法重连恢复。
     if (this.pm.totalPeers() >= this.config.maxPeersPerRoom) {
-      this._close(ws, 4029, 'room full');
-      return;
+      const existing = this.pm.getPeer(groupKey, peerId);
+      if (!existing) {
+        this._close(ws, 4029, 'room full');
+        return;
+      }
+    }
+    // 每分组 peer 上限（v1.5）：单个网络分组的在线节点数达到上限后，该网络
+    // 的新节点被拒（其它网络不受影响）；0 = 不限。重连顶替（同 peerId）在
+    // addPeer 时处理，不受此限制。
+    if (this.config.maxPeersPerGroup > 0) {
+      const g = this.pm.groups.get(groupKey);
+      const isReconnect = g && g.peers.has(peerId);
+      if (g && !isReconnect && g.peers.size >= this.config.maxPeersPerGroup) {
+        this.counters.groupLimited = (this.counters.groupLimited || 0) + 1;
+        this.log.warn(
+          `handshake rejected: group full network="${networkName}" peers=${g.peers.size}/${this.config.maxPeersPerGroup}`
+        );
+        this._close(ws, 4030, 'group full');
+        return;
+      }
     }
 
     // 注册
@@ -886,6 +955,7 @@ export class RelayRoom {
     await this._initPromise;
     const now = Date.now();
     const cfg = this.config;
+    this.counters.alarmCount = (this.counters.alarmCount || 0) + 1; // v1.5 额度估算用
 
     for (const ws of this.state.getWebSockets()) {
       if (ws.readyState !== WS_OPEN) continue;
@@ -1086,11 +1156,20 @@ export class RelayRoom {
       config: {
         serverHostname: this.config.serverHostname,
         serverVersionStr: this.config.serverVersionStr,
+        serverNetworkName: this.config.serverNetworkName,
         avoidRelayData: this.config.avoidRelayData,
         relayData: this.config.relayData,
         strictDigest: this.config.strictDigest,
         maxPeersPerRoom: this.config.maxPeersPerRoom,
+        maxPeersPerGroup: this.config.maxPeersPerGroup,
+        maxConnsPerIp: this.config.maxConnsPerIp,
+        maxMessageBytes: this.config.maxMessageBytes,
+        msgRateLimitPerSec: this.config.msgRateLimitPerSec,
+        handshakeTimeoutMs: this.config.handshakeTimeoutMs,
         peerIdleTimeoutMs: this.config.peerIdleTimeoutMs,
+        serverPingIdleMs: this.config.serverPingIdleMs,
+        sweepIntervalMs: this.config.sweepIntervalMs,
+        sweepIdleIntervalMs: this.config.sweepIdleIntervalMs,
         digestValidation: !!this.config.networkSecrets,
         routeInfoTtlMs: this.config.routeInfoTtlMs,
         routeInfoUnreachableMs: this.config.routeInfoUnreachableMs,
@@ -1101,7 +1180,7 @@ export class RelayRoom {
 
   /**
    * 删除分组（管理端，支持批量）：断开组内全部连接、清除路由/会话数据，
-   * 并在无同网络兄弟分组时删除摘要注册表条目（解除抢占封锁）。
+   * 并在无同网络兄弟分组时删除摘要注册表条目。
    * 网络名同时进入黑名单 group 类（该网络的后续握手将被拒绝，可在黑名单页解除）。
    * body: {groupKey} | {groupKeys:[]} | {networkName} | {all:true}
    */
@@ -1138,9 +1217,11 @@ export class RelayRoom {
           closed += 1;
         }
       }
-      // 黑名单（group 类）：该网络名的后续接入被拒
-      this.audit.blacklistAdd('group', info.networkName, {
-        reason: 'group deleted by admin', groupKey: gk,
+      // 黑名单（digest 类，v1.4.2 安全加固）：拉黑「网络名+摘要」完整粒度——
+      // 被删分组对应的抢占者摘要被精确拦截，同网络其它摘要（正主）不受影响；
+      // 原先拉黑纯网络名会让管理员操作反而封锁合法用户。
+      this.audit.blacklistAdd('digest', gk, {
+        reason: 'group deleted by admin', networkName: info.networkName,
       });
       deleted.push({ groupKey: gk, networkName: info.networkName, closedPeers: closed });
       this.log.info(`admin: group deleted key=${gk} network=${info.networkName} closed=${closed}`);
@@ -1217,9 +1298,14 @@ export class RelayRoom {
       return { ok: false, error: 'networkNames required' };
     }
     const r = this.pm.deleteDigests(networkNames);
-    // 黑名单（digest 类）+ 审计
-    for (const name of networkNames) {
-      this.audit.blacklistAdd('digest', name, { reason: 'digest deleted by admin' });
+    // 黑名单（digest 类，v1.4.2 安全加固）：按被删注册的完整「网络名:摘要」
+    // 粒度拉黑——被删的抢占者摘要被拦截，同网络其它摘要不受影响
+    //（本操作用于解锁抢占，拉黑整个网络名会连正主一并封锁）。
+    for (const x of r.results || []) {
+      if (!x.existed) continue;
+      this.audit.blacklistAdd('digest', `${x.networkName}:${x.digest}`, {
+        reason: 'digest deleted by admin', networkName: x.networkName,
+      });
     }
     // 关闭被清除分组内的连接（分组已删，按 socket 的 groupKey 匹配）
     let closedTotal = 0;

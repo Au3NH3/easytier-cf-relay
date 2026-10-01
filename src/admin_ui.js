@@ -599,11 +599,30 @@ function renderOverview(s) {
   if (s.config) {
     h += kv('hostname', s.config.serverHostname);
     h += kv('版本', s.config.serverVersionStr);
+    h += kv('服务端网络名', s.config.serverNetworkName, null,
+      '握手响应中宣告的网络名（SERVER_NETWORK_NAME）。与客户端网络名不同即外部网络中继模式');
     h += kv('纯 P2P', s.config.avoidRelayData ? '开' : '关');
     h += kv('数据中继', s.config.relayData ? '开' : '关');
     h += kv('密钥校验', s.config.digestValidation ? '开' : '关');
+    h += kv('摘要策略', s.config.strictDigest ? '不同摘要拒绝' : '不同摘要隔离', null,
+      '同一网络名出现不同密钥摘要时（STRICT_DIGEST）：拒绝新摘要接入，或隔离为不同分组');
     h += kv('单房间节点数上限', s.config.maxPeersPerRoom, null,
       '同一房间（Durable Object）内允许的最大在线节点数（MAX_PEERS_PER_ROOM）');
+    h += kv('单分组节点数上限', s.config.maxPeersPerGroup > 0 ? s.config.maxPeersPerGroup : '不限', null,
+      '单个网络分组的在线节点数上限（MAX_PEERS_PER_GROUP，v1.5），防单网络占满房间');
+    h += kv('单 IP 连接数上限', s.config.maxConnsPerIp > 0 ? s.config.maxConnsPerIp : '不限', null,
+      '同一客户端 IP 的并发连接数上限（MAX_CONNS_PER_IP，v1.4.1 事前限流）');
+    h += kv('消息速率上限', s.config.msgRateLimitPerSec > 0 ? s.config.msgRateLimitPerSec + '/秒' : '不限', null,
+      '单连接每秒最大消息数（MSG_RATE_LIMIT_PER_SEC，v1.5），持续超限断开');
+    h += kv('消息大小上限', (s.config.maxMessageBytes / 1024).toFixed(0) + ' KiB');
+    h += kv('握手超时', dur(s.config.handshakeTimeoutMs));
+    h += kv('空闲超时', dur(s.config.peerIdleTimeoutMs), null,
+      '必须大于客户端 Ping 最大间隔 32s（PEER_IDLE_TIMEOUT_MS）');
+    h += kv('探活阈值', dur(s.config.serverPingIdleMs), null,
+      '空闲超过该时长服务端主动发 Ping 探测半开连接（SERVER_PING_IDLE_MS）');
+    h += kv('清扫周期 / 空闲退避', dur(s.config.sweepIntervalMs) + ' / ' +
+      (s.config.sweepIdleIntervalMs > 0 ? dur(s.config.sweepIdleIntervalMs) : '关闭'), null,
+      'alarm 清扫周期上限（SWEEP_INTERVAL_MS）与空房间退避间隔（SWEEP_IDLE_INTERVAL_MS，v1.4.0）');
     h += kv('路由条目老化', dur(s.config.routeInfoUnreachableMs) + ' / ' + dur(s.config.routeInfoTtlMs), null,
       '斜杠前：条目未刷新且节点不可达超过该时长（1m30s = 90 秒）即删除；' +
       '斜杠后：条目未刷新超过该时长（1h1m = 61 分钟）无条件删除。活跃节点会周期性刷新，不受影响');
@@ -624,7 +643,34 @@ function renderOverview(s) {
     'DO 层（升级/握手）黑名单拒绝次数。v1.3.0 起拒绝不再逐条写记录（防重连风暴刷爆记录列表），' +
     '改由此计数观测；边缘层（Worker 入口 KV 直读）拒绝的连接不经过 DO，不在此计数。' +
     '计数随 DO 重启归零');
+  h += kv('IP 限流', c.ipLimited || 0, (c.ipLimited || 0) > 0 ? 'bad' : 'good',
+    '单 IP 并发连接超限拒绝次数（MAX_CONNS_PER_IP，v1.4.1 事前限流，DO 升级层口径）。' +
+    '计数随 DO 重启归零');
+  h += kv('速率限流', c.rateLimited || 0, (c.rateLimited || 0) > 0 ? 'bad' : 'good',
+    '单连接消息速率超限断开次数（MSG_RATE_LIMIT_PER_SEC，v1.5 事前限流）。' +
+    '计数随 DO 重启归零');
+  h += kv('分组限流', c.groupLimited || 0, (c.groupLimited || 0) > 0 ? 'bad' : 'good',
+    '单分组节点数超限拒绝次数（MAX_PEERS_PER_GROUP，v1.5 事前限流）。' +
+    '计数随 DO 重启归零');
   h += '</div>';
+  // 额度估算（v1.5 A4）：免费计划 100k 请求/天的自观测口径
+  {
+    var alarmDaily = s.uptimeSec > 0 ? Math.round((c.alarmCount || 0) / s.uptimeSec * 86400) : (c.alarmCount || 0);
+    var est = Math.round((c.msgsIn || 0) / 20) + (c.connsTotal || 0) + alarmDaily;
+    var quota = 100000;
+    var pct = Math.min(100, Math.round(est / quota * 1000) / 10);
+    var pctColor = pct >= 80 ? 'var(--bad)' : pct >= 50 ? 'var(--warn)' : 'var(--ok)';
+    h += '<div class="card"><h3>额度估算（quota，估算值）</h3>';
+    h += kv('今日估算计费请求', '≈ ' + est.toLocaleString() + ' / ' + quota.toLocaleString());
+    h += '<div style="background:var(--bg);border:1px solid var(--line);border-radius:6px;height:10px;margin:6px 0 2px;overflow:hidden">' +
+      '<div style="background:' + pctColor + ';height:100%;width:' + pct + '%"></div></div>';
+    h += kv('占比', pct + '%', pct >= 80 ? 'bad' : null);
+    h += kv('口径', '入站消息÷20 + 连接建立 + alarm 折算日均', null,
+      '估算值，非账号级真实用量（Workers 无查询 API）：不含 Worker 入口请求（边缘黑名单拒绝、' +
+      'tar pit 等到达入口的每次请求各计 1 次但此处无法统计），且各计数随 DO 重启归零会低估；' +
+      '真实用量以 Cloudflare 控制台为准');
+    h += '</div>';
+  }
   if (st.groups) {
     h += '<div class="card"><h3>网络分组（foreign-network）</h3>';
     h += kv('分组总数', st.groups.total);

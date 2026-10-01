@@ -3,7 +3,7 @@
 
 name = "easytier-cf-relay"
 main = "src/index.js"
-compatibility_date = "2026-09-20"
+compatibility_date = "2026-10-1"
 compatibility_flags = ["nodejs_compat"]
 
 # WebSocket Hibernation 需要的最低兼容日期为 2024-04-03
@@ -16,7 +16,7 @@ SERVER_PEER_ID = "10000001"
 # 服务端在握手响应中宣告的网络名（与客户端网络名不同 => 外部网络中继模式）
 SERVER_NETWORK_NAME = "public_server"
 SERVER_HOSTNAME = "easytier-cf-relay"
-SERVER_VERSION_STR = "easytier-cf-relay/1.4.1"
+SERVER_VERSION_STR = "easytier-cf-relay/1.5.0"
 # 指定 Durable Object 地区配置（可选值：wnam 西部地区（北美）enam 东部地区（北美）sam 南美洲 weur 西欧 eeur 东欧 apac	亚太地区（已设置，默认未开启） oc 大洋洲 afr 非洲 me 中东）
 # LOCATION_HINT = "apac"
 # 纯 P2P 模式：1 = 在 feature_flag 中宣告 avoid_relay_data（OSPF 给本节点边赋大代价，
@@ -33,6 +33,12 @@ MAX_CONNS_PER_IP = "6"
 # （不返回 404，不泄露行为指纹，让扫描器空等）；EasyTier 客户端只走
 # WS 升级，不受影响；0 = 关闭（恢复 404）
 TARPIT_UNKNOWN = "1"
+# 单连接消息速率上限（v1.5，事前限流）：每连接每秒最大消息数，持续超限断开
+# （4008）；EasyTier 心跳 8s 1 个、路由同步爆发每秒数十个，默认 50 宽裕；0 = 关闭
+MSG_RATE_LIMIT_PER_SEC = "50"
+# 每分组 peer 上限（v1.5）：单个网络分组的在线节点数上限，防单网络占满房间；
+# 0 = 不限（仅受 MAX_PEERS_PER_ROOM 约束）
+MAX_PEERS_PER_GROUP = "32"
 # 单条 WS 消息最大字节数（EasyTier MTU 默认 1380，RPC 路由同步会更大）
 MAX_MESSAGE_BYTES = "131072"
 # 未握手连接超时（毫秒）—— 幽灵连接清理
