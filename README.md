@@ -1,3 +1,5 @@
+<div align="center">
+
 # EasyTier Cloudflare Relay V1.5.0
 
 在 Cloudflare Workers 免费额度内运行 EasyTier 自建 WebSocket 节点——无需 VPS，
@@ -5,15 +7,35 @@
 
 已用 easytier-core **2.6.4** 官方客户端实测：握手、路由同步、双节点互见、数据中继全部通过。
 
+<img src="assets/icon.svg" width="110" alt="EasyTier Cloudflare Relay 图标"/>
+
+[![版本](https://img.shields.io/badge/版本-v1.5.0-6699FF?style=flat-square)](docs/更新日志.md) [![Stars](https://img.shields.io/github/stars/WWSTA/easytier-cf-relay?style=flat-square&logo=github&label=Stars&color=ffcb2d)](https://github.com/WWSTA/easytier-cf-relay/stargazers) [![License](https://img.shields.io/github/license/WWSTA/easytier-cf-relay?style=flat-square&color=1a7f37)](LICENSE) [![平台](https://img.shields.io/badge/平台-Cloudflare_Workers-F6821F?style=flat-square&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/) [![实测](https://img.shields.io/badge/官方实测-easytier--core_2.6.4-1a7f37?style=flat-square)](docs/技术文档.md) [![语言](https://img.shields.io/badge/语言-JavaScript-f7df1e?style=flat-square&logo=javascript&logoColor=black)](#) [![Wrangler](https://img.shields.io/badge/Wrangler-v4-0969da?style=flat-square)](#)
+
 由于作者不太会Workers的开发，所以使用了国模**GLM5.3/GLM5.3-Flash**进行全栈开发。虽然与国模进行了不少友好交流，但是可能仍然有一些不影响使用的特性，下个版本会继续修，欢迎各位有想法的fork修理。（更新花费越来越大，总花费可以看更新日志）
+
+---
+
+## 介绍站点
+
+本项目配套一套 介绍网站 ，包含：
+
+- **项目主页** — 功能特性、快速开始、架构图、成本与额度、已知限制
+- **wrangler.toml 配置生成器** — 分类表单调整全部配置项（默认值与仓库 `wrangler.toml` 逐项一致），实时预览与校验，一键复制 / 下载可直接部署的配置文件
+- **文档网页版** — 部署手册 / 技术文档 / 更新日志全文收录，支持「完整 / 精炼」双视图与明暗主题切换
+
+**在线访问**：[easytier-cf-relay-web](https://wwsta.github.io/easytier-cf-relay-web/)
+
+------
+
+## 演示节点
 
 这是作者使用本项目部署好的节点[wss://ouret.ccwu.cc](https://ouret.ccwu.cc/)（由于免费额度有限，为了让更多人使用，已禁中转）
 
 > [!NOTE]
 >
-> 由于本作者的节点**域名**在“移动”的国际链路上可能被 **TLS SNI 黑名单拦截**，所以“移动”网络下可能会连接失败（只是作者用的域名有问题，服务器是没有问题，换一个域名其实就可以了，这段时间为了查明这个头疼了不久，所以更新慢了；另外，强烈建议更新到V1.5.0
+> 由于本作者的节点**域名**在“移动”的国际链路上可能被 **TLS SNI 黑名单拦截**，所以“移动”网络下可能会连接失败（只是作者用的域名有问题，服务器是没有问题，换一个域名其实就可以了，这段时间为了查明这个头疼了不久，所以更新慢了）；另外，强烈建议更新到V1.5.0
 
-
+---
 
 ## 功能
 
@@ -47,6 +69,8 @@
   KV 审计经内存缓冲 + DO storage + 节流镜像三级写入，写入量可控（见部署手册成本章节）
   ![p](p.png)
 
+---
+
 ## 快速开始
 
 ```bash
@@ -65,6 +89,8 @@ easytier-core --network-name myteam --network-secret s3cret! \
 
 本地开发：`npm run dev`（修改配置见 `wrangler.toml`，敏感变量可用 `npx wrangler secret put`）启动 wrangler dev，用官方客户端连接 `ws://127.0.0.1:8787/` 验证。
 
+---
+
 ## 文档
 
 | 文档 | 内容 |
@@ -72,6 +98,8 @@ easytier-core --network-name myteam --network-secret s3cret! \
 | [部署手册](docs/部署手册.md) | 快速部署、全部配置项（含 KV 审计）、域名绑定、成本额度、运维、FAQ |
 | [技术文档](docs/技术文档.md) | 协议实现详解、幽灵节点六重防线、KV 审计与黑名单设计、与官方对比、Hibernation 设计 |
 | [更新日志](docs/更新日志.md) | 各版本变更明细 |
+
+---
 
 ## 项目结构
 
@@ -86,9 +114,13 @@ docs/   部署手册 / 技术文档 / 更新日志
 Cloudflare 控制台设置；本地 `wrangler dev` 如需覆盖可用 `.dev.vars` 文件（已 gitignore，
 不随 deploy 上传）。
 
+---
+
 ## 另一种选择
 
 [【教程】Cloudflare Tunnel 自建 EasyTier 共享节点（无Docker，自定义域名 wss:// 接入，客户端自建虚拟局域网，再也不怕公益服务器掉线）](https://github.com/orgs/EasyTier/discussions/2512)
+
+---
 
 ## 致谢
 
@@ -99,9 +131,13 @@ Cloudflare 控制台设置；本地 `wrangler dev` 如需覆盖可用 `.dev.vars
 - **[Teleseon/cf-workers-et-ws](https://github.com/Teleseon/cf-workers-et-ws)** —活跃改进的 fork。其 DO 计费与 protobuf 兼容性经验（setInterval 常驻计费、Workers 上的 eval 限制）直接影响了本项目"全 Hibernation + pbjs 静态代码生成"的技术路线。
 - **[21paradox/easytier-wsrelay](https://github.com/21paradox/easytier-wsrelay)** 与**[PIKACHUIM/easytier-worker](https://github.com/PIKACHUIM/easytier-worker)** —社区多语言/带面板方向的探索，其踩过的协议细节坑（PacketType 枚举、method_index 基数等）为本项目"逐字段对照官方源码修正"提供了前车之鉴。
 
+---
+
 ## 许可
 
 [MIT License](https://github.com/WWSTA/easytier-cf-relay/blob/main/LICENSE)
+
+---
 
 ## 免责声明
 
