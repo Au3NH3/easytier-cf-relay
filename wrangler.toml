@@ -3,7 +3,7 @@
 
 name = "easytier-cf-relay"
 main = "src/index.js"
-compatibility_date = "2026-10-1"
+compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
 # WebSocket Hibernation 需要的最低兼容日期为 2024-04-03
